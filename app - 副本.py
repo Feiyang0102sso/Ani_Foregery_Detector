@@ -73,13 +73,6 @@ def predict_image(image):
             # 获取篡改热力图预测
             mask_logits = preds.get('pred_mask', None)
 
-            # 获取图像级真假分类概率 (cls_head 的输出)
-            cls_prob = 0.0
-            if 'pred_label_prob' in preds:
-                cls_prob = float(preds['pred_label_prob'].item())
-            elif 'pred_label' in preds:
-                cls_prob = float(preds['pred_label'].item())
-
             # 获取溯源结果预测 (0, 1, 2, 3)
             if 'pred_source' in preds:
                 source_idx = int(preds['pred_source'].item())
@@ -101,78 +94,63 @@ def predict_image(image):
             else:
                 mask_logits = preds
 
-    # 3.4 提取真实概率图
+    # 3.4 提取真实概率图：撤销错误的双重 Sigmoid，直接接收模型的合法概率输出！
     mask = mask_logits.squeeze().cpu().numpy()
 
-    # 防御性维度对齐
+    # 防御性维度对齐：确保输出是一个纯粹的 512x512 二维矩阵
     if mask.ndim == 3:
         mask = mask[0]
     elif mask.ndim == 0:
         mask = np.full((512, 512), mask.item())
 
-    # === 4. 双轨制打分：图像级分类 + 像素级掩码 ===
-    # 图像级分类置信度 (来自 cls_head，这是判断"整张图是否AI"的核心依据)
-    cls_confidence = cls_prob * 100  # 0~100
-
-    # 像素级掩码分析 (用于判断"局部重绘"区域)
+    # === 4. 统计学噪声抑制与鲁棒性打分 (Statistical Noise Mitigation) ===
+    # 计算全局平均可疑度（正常真图的底噪会被稀释到极低）
     mean_score = float(np.mean(mask)) * 100
+
+    # 计算局部最高峰值（使用 99.5% 分位数，过滤掉极个别神经质跳跃的噪点像素）
     peak_score = float(np.percentile(mask, 99.5)) * 100
+
+    # 连通域面积计算：严格以 0.5 (50%) 为分水岭，统计疑似假图像素的占比
     suspicious_area_ratio = np.sum(mask > 0.5) / mask.size
 
+    # 双轨制打分策略 (Dual-track Scoring Strategy)
     if suspicious_area_ratio > 0.01:
-        mask_confidence = peak_score
+        final_confidence = peak_score
     else:
-        mask_confidence = mean_score
+        final_confidence = mean_score  # 若面积太小纯属底噪，则打回原形采用平均分
 
-    # 综合判断：取两个维度中较高的置信度
-    # cls_confidence 擅长判断"整张AI图"，mask_confidence 擅长判断"局部重绘"
-    final_confidence = max(cls_confidence, mask_confidence)
+    # === 5. 视觉可视化 (Visualization Rendering) ===
+    # 视觉净化：只要概率低于 0.5 (即模型认为倾向于真)，全部抹零归为安全，画面干干净净
+    clean_mask = np.where(mask > 0.5, mask, 0)
 
-    # === 5. 视觉可视化 ===
-    # 判断是否为"整图AI生成"场景：cls_head 说是AI，但 mask 没有局部异常
-    # 这种情况下，应该把整张图涂成红色（就像作者原始训练时 text2img 的全白 mask 一样）
-    is_whole_image_ai = (cls_confidence > 50) and (suspicious_area_ratio < 0.01)
+    # 将 512x512 的特征图拉伸回用户原图的真实比例
+    mask_resized = cv2.resize(clean_mask, (original_w, original_h))
 
-    if is_whole_image_ai:
-        # 整图AI生成：用 cls_head 的概率值填充整张 mask，产生均匀红色覆盖
-        uniform_mask = np.full((original_h, original_w), cls_prob)
-        mask_resized = uniform_mask
-        raw_mask_resized = uniform_mask
+    # 将原始概率图也拉伸，用于精确查询（不经过阈值过滤，保留所有细节）
+    raw_mask_resized = cv2.resize(mask, (original_w, original_h))
 
-        heatmap = cv2.applyColorMap(np.uint8(255 * mask_resized), cv2.COLORMAP_JET)
-        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+    # 应用伪彩映射 (COLORMAP_JET: 蓝 -> 绿 -> 红)
+    heatmap = cv2.applyColorMap(np.uint8(255 * mask_resized), cv2.COLORMAP_JET)
+    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
 
-        # 以 cls_prob 作为透明度上限，越确信越红
-        alpha = np.full((original_h, original_w, 1), 0.4 * cls_prob)
-        overlay = (image * (1 - alpha) + heatmap * alpha).astype(np.uint8)
-    else:
-        # 局部重绘场景 或 真实图片：使用原始 mask 热力图
-        clean_mask = np.where(mask > 0.5, mask, 0)
-        mask_resized = cv2.resize(clean_mask, (original_w, original_h))
-        raw_mask_resized = cv2.resize(mask, (original_w, original_h))
+    # 智能叠图蒙版：只有在预测矩阵大于 0 的地方，才以 40% 的透明度覆盖热力图
+    alpha = np.where(mask_resized > 0, 0.4, 0)[..., np.newaxis]
+    overlay = (image * (1 - alpha) + heatmap * alpha).astype(np.uint8)
 
-        heatmap = cv2.applyColorMap(np.uint8(255 * mask_resized), cv2.COLORMAP_JET)
-        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-
-        alpha = np.where(mask_resized > 0, 0.4, 0)[..., np.newaxis]
-        overlay = (image * (1 - alpha) + heatmap * alpha).astype(np.uint8)
-
-    # === 6. 三级决策报告 ===
+    # === 6. 三级决策报告生成 (Tri-level Warning System) ===
     source_name = SOURCE_MAP.get(source_idx, "未知来源")
 
     if final_confidence >= 70:
-        if is_whole_image_ai:
-            report = f"🚨 危险：高度疑似 AI 整图生成！\n"
-        else:
-            report = f"🚨 危险：高度疑似局部 AI 重绘！\n"
+        report = f"🚨 危险：高度疑似 AI 生成或局部重绘！\n"
     elif 45 <= final_confidence < 70:
-        report = f"⚠️ 可疑：检测到 AI 生成痕迹。\n"
+        report = f"⚠️ 可疑：局部存在未知修改痕迹。\n"
     else:
         report = f"✅ 安全：大概率为真实人类手绘作品。\n"
 
-    report += f"▸ AI生成概率 (cls_head): {cls_confidence:.2f}%\n"
-    report += f"▸ 局部篡改置信度 (mask): {mask_confidence:.2f}%\n"
+    # 拼接溯源模型判断结果
+    report += f"▸ 篡改综合置信度: {final_confidence:.2f}%\n"
     report += f"▸ 图像来源判定: {source_name} (置信度: {source_conf:.2f}%)"
+
 
     # 返回叠加图、报告、以及原始概率图供交互查询
     return overlay, report, raw_mask_resized

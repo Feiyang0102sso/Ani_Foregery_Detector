@@ -860,6 +860,8 @@ class AniXplore(nn.Module):
             "pred_mask": mask_pred,
             # predicted binaray label, will calculate for metrics automatically
             "pred_label": pred_label_binary,
+            # predicted label probability (for inference UI confidence display)
+            "pred_label_prob": pred_label_prob,
             #  [新增] 输出溯源预测结果
             "pred_source": pred_source,
             # 把原始输出传给 UI 计算百分比
