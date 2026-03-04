@@ -1,0 +1,22 @@
+# --- IDE configuration file ---
+.idea/
+
+# --- Python cached files (standard ignore) ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# --- environment ---
+.venv/
+.cache/
+
+# --- LOGS ---
+*.log
+
+CKPTS/
+my_new_shearlet_model/
+output_dir/
+
+
+*.zip
