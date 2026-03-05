@@ -150,30 +150,18 @@ def get_args_parser():
     
     parser.add_argument('--checkpoint_path', type=str, default="", help="pretrained ckpt path")
 
-    # 只让 source_head 和 auto_weight 训练，其它所有参数都冻结。
-    parser.add_argument('--freeze_backbone', action='store_true',
-                        help='If enabled, all network parameters except source_head and auto_weight are frozen. '
-                             'This is typically used when a new classification head is first added.')
+    # ===== 训练模式开关 =====
+    # 模式 A (默认): 训练除 source_head 外的所有模块 (mask + cls)
+    # 模式 B (--train_source_only): 冻结一切，只训练 source_head + auto_weight
+    parser.add_argument('--train_source_only', action='store_true',
+                        help='Phase 2: freeze everything, only train source_head + auto_weight for source tracing.')
 
-    # 只冻结 source_head 和 auto_weight，其它所有参数都可以训练
-    parser.add_argument('--freeze_source', action='store_true',
-                        help='If enabled, source_head and auto_weight will be frozen to preserve current source tracing ability.')
-
-    # 针对野图微调：只训练图像级判别头（保持像素级 inpainting 能力完全不动）
-    parser.add_argument(
-        '--wild_cls_only',
-        action='store_true',
-        help='When set, only the image-level classification head is trainable during finetuning on wild images. '
-             'All mask-related branches (fusion_layers, featurePyramid_net, predict_head) remain frozen so that '
-             'pixel-wise inpainting localization stays unchanged.'
-    )
+    # 关闭溯源 Loss（默认模式下自动生效，source_head 不参与训练也不计算 Loss）
+    parser.add_argument('--disable_source_loss', action='store_true',
+                        help='Disable source tracing loss. Auto-enabled in default mode, manual in source-only mode.')
 
     parser.add_argument('--use_heavy_aug', action='store_true',
                         help='Training with data augmentation')
-
-    # 针对野图微调或消融实验：不计算/不反向传播溯源源（来源模型）分类损失
-    parser.add_argument('--disable_source_loss', action='store_true',
-                        help='If enabled, disables the source tracing loss calculation during training. Useful for wild image finetuning where source labes are unreliable or nonexistent.')
 
     args, remaining_args = parser.parse_known_args()
 
@@ -472,44 +460,27 @@ def main(args, model_args):
             model.load_state_dict(checkpoint['model'], strict=False)
 
         # =================================================================
-        # 🔥 野图微调专属策略：冻结重型骨干与溯源头，仅训练检测相关模块
+        # 训练模式选择
         # =================================================================
-        print("=> 实施【野图伪造检测微调】策略：冻结骨干网络，切断溯源分支...")
-
-        # 1. 第一步：残暴地把所有参数全部冻结
+        # 1. 先冻结所有参数（节省显存，防止 OOM）
         for param in model.parameters():
             param.requires_grad = False
 
-        # 2. 第二步：精准解冻负责“伪造检测”的核心模块
-        # trainable_modules = ['cls_head',
-        #                      'predict_head',
-        #                      'featurePyramid_net',
-        #                      'fusion_layers',
-        #                      # 'auto_weight',  #不再训练 auto_weight，因为已经硬编码了 Loss
-        #                      'convnext.stages.2',
-        #                      'segformer.block4']
-
-        # 2. 第二步：精准解冻需要训练的模块
-        #    默认策略：同时微调图像级分类头 + 像素级掩码分支（适合全监督场景）
-        #    野图微调（--wild_cls_only）：只训练图像级分类头，完全冻结掩码分支，确保 inpainting 能力不被破坏
-        if args.wild_cls_only:
-            print("🎯 [Wild Finetune] Enable wild_cls_only: "
-                  "freeze mask branch (fusion_layers / featurePyramid_net / predict_head), "
-                  "train cls_adapter + cls_head + source_head on wild images.")
-            trainable_modules = [
-                'cls_adapter',
-                'cls_head',
-                'source_head',
-                'auto_weight'
-            ]
+        # 2. 根据模式精准解冻
+        if args.train_source_only:
+            # ===== Phase 2: 只训练溯源头 =====
+            print("🎯 [Phase 2] 只训练 source_head + auto_weight，其余全部冻结")
+            trainable_modules = ['source_head', 'auto_weight']
         else:
+            # ===== Phase 1 (默认): 训练 mask + cls，冻结 source_head =====
+            args.disable_source_loss = True
+            print("🔥 [Phase 1] 训练 mask + cls（source_head 冻结，source_loss 自动禁用）")
             trainable_modules = [
                 'cls_adapter',
                 'cls_head',
                 'predict_head',
                 'featurePyramid_net',
                 'fusion_layers',
-                'source_head',
                 'auto_weight'
             ]
 
@@ -517,14 +488,13 @@ def main(args, model_args):
             if any(target in name for target in trainable_modules):
                 param.requires_grad = True
 
-        # 3. 打印确认，确保万无一失
+        # 打印确认
         trainable_params = [n for n, p in model.named_parameters() if p.requires_grad]
         frozen_params = [n for n, p in model.named_parameters() if not p.requires_grad]
-
-        print(f"❄️ 已冻结参数层数: {len(frozen_params)} (包含 ConvNeXt, SegFormer, Source_head 等)")
+        print(f"❄️ 冻结参数: {len(frozen_params)} 层")
         print(f"❄️ {frozen_params}")
-        print(f"🔥 正在训练的参数层数: {len(trainable_params)} (包含 FPN, Fusion, Cls_head, Predict_head)")
-        print(f"🔥 {trainable_params} ")
+        print(f"🔥 训练参数: {len(trainable_params)} 层")
+        print(f"🔥 {trainable_params}")
         # =================================================================
 
 
@@ -551,17 +521,6 @@ def main(args, model_args):
         #     for name, param in model.named_parameters():
         #         if 'source_head' in name or 'auto_weight' in name:
         #             param.requires_grad = False
-
-        # 检查一下哪些参数在训练
-        # trainable_params = [n for n, p in model.named_parameters() if p.requires_grad]
-        # if args.freeze_backbone or args.freeze_source:
-        #     print(f"🔥 The only parameters involved in training are: {trainable_params}")
-        # else:
-        #     print(f"🔥 All parameters are involved in training, "
-        #           f"resulting in a total of {len(trainable_params)} parameter layers.")
-            # print(f"🔥 参与训练的参数共有: {trainable_params}")
-        # =================================================================
-
         
     else:
         # from scratch

@@ -7,7 +7,7 @@ import random
 # ⚙️ 硬编码的常数配置
 # ==========================================
 # 根据你的报错截图，如果需要直接测试，可以将这里改成你的实际路径：
-IMAGE_PATH = r"E:\!project dataset\fake_images\0000\text2image\1013000\FLUX1_text2image_1013000.png"
+IMAGE_PATH = r"E:\!project dataset\fake_images\0000\inpainting\1013000\FLUX1_inpainting_1013000_tree.png"
 # IMAGE_PATH = "test_image.jpg"
 
 

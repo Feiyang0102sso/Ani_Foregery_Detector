@@ -830,26 +830,8 @@ class AniXplore(nn.Module):
         # 得到 0,1,2,3 的预测类别
         pred_source = torch.argmax(raw_source_logit, dim=1)
 
-        # 把 source_loss 加入自动权重计算中
-        # combined_loss = self.auto_weight(loss, cls_loss)
-        # combined_loss = self.auto_weight(loss, cls_loss, source_loss)
+        combined_loss = self.auto_weight(loss, cls_loss, source_loss)
 
-        # ================== 【修改开始】 ==================
-        if disable_source_loss:
-            # 🚨 野图微调模式，关闭了溯源头。此时 `auto_weight` 应该只有 2 个参数！ (在初始化阶段应确保正确)
-            # 对于不需要局部损失的“野图全为红”现象，是因为 mask 没有得到正确的监督并且模型权重被野图彻底洗掉。
-            # 为了防止 `cls_loss` 喧宾夺主，同时我们仍然需要权重的自适应，我们将仅联合这两项：
-            # 若 auto_weight 仍被初始化为3 (为了兼容载入权重)，切片前两个使用。
-            if len(self.auto_weight.params) >= 2:
-                precision_0 = torch.exp(-self.auto_weight.params[0])
-                precision_1 = torch.exp(-self.auto_weight.params[1])
-                combined_loss = precision_0 * loss + 0.5 * self.auto_weight.params[0] + \
-                                precision_1 * cls_loss + 0.5 * self.auto_weight.params[1]
-            else:
-                combined_loss = loss + cls_loss
-        else:
-            # 正常的联合训练模式
-            combined_loss = self.auto_weight(loss, cls_loss, source_loss)
         # ================== 【修改结束】 ==================
 
 

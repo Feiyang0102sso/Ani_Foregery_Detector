@@ -145,15 +145,11 @@ class AbstractDataset(Dataset):
                     tp_img = res_dict['image']
                     gt_img = res_dict['mask']
                     
-                    # 🚨 [BUGFIX: Only recalculate label dynamically for inpainting masks]
-                    # For pure Real (raw) or pure AI (text2img), their label is fundamentally 0 or 1 respectively
-                    # It shouldn't depend on how exact float augmentations happen to 0 and 255.
-                    if gt_path != 'raw' and gt_path != 'text2img':
-                        # copy_move may cause the label change for inpaint masks, so we update
-                        if np.all(gt_img == 0):
-                            label = 0
-                        else:
-                            label = 1
+                    # copy_move may cause the label change, so we need to update the label
+                    if np.all(gt_img == 0):
+                        label = 0
+                    else:
+                        label = 1
                     
                 # redefine the shape, here is np.array
                 tp_shape = tp_img.shape[0:2]  # H, W, 3 去掉最后一个3

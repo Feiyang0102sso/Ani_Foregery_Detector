@@ -14,9 +14,11 @@ print("⏳ 正在唤醒 AniXplore 满级大脑...")
 model = MODELS.get('AniXplore')(image_size=512, seg_pretrain_path=None)
 
 # 1.2 加载权重文件 (设置 weights_only=False 绕过 PyTorch 2.6 的安全拦截)
-ckpt = torch.load("my_new_shearlet_model/checkpoint-9.pth", map_location=device, weights_only=False)
+ckpt = torch.load("my_source_model\checkpoint-8.pth", map_location=device, weights_only=False)
 # "my_new_shearlet_model/checkpoint-8.pth",
 # CKPTS/AniXplore/checkpoint-29.pth
+# my_mixed_model/
+# "my_mixed_model/checkpoint-9.pth",
 
 # 1.3 剥离 DDP 多卡训练留下的 'module.' 前缀字典映射
 state_dict = ckpt['model'] if 'model' in ckpt else ckpt

@@ -20,3 +20,5 @@ output_dir/
 
 
 *.zip
+
+*_model/

@@ -24,25 +24,12 @@ def train_one_epoch(model: torch.nn.Module,
 
     model.train(True)
 
-    # ++++++ 【清理硬编码 - 引入按需冻结机制】 ++++++
-    # 根据模块是否参与训练 (requires_grad) 动态设置 train() 还是 eval() 模式
-    # 这样被冻结的骨干（包含 BN 层）就不会在野图训练中跑偏参数
-    module_to_freeze = model.module if hasattr(model, 'module') else model
-    for name, module in module_to_freeze.named_modules():
-        # 获取该模块下所有的参数
-        params = list(module.parameters(recurse=False))
-        # 只要该模块直接包含的任何参数需要求导，就设为 train()，否则强制 eval()
-        if any(p.requires_grad for p in params):
-            module.train()
-        elif len(params) > 0:
-            module.eval()
-            
-    # 特别地，显式把不参加训练的整体骨干也强制 eval 避免意外的 drop_path 等行为
-    if not any(p.requires_grad for p in module_to_freeze.convnext.parameters()):
-        module_to_freeze.convnext.eval()
-    if not any(p.requires_grad for p in module_to_freeze.segformer.parameters()):
-        module_to_freeze.segformer.eval()
-    # ++++++ 【机制更新完毕】 ++++++
+    # 如果骨干网络被冻结，强制设为 eval() 避免 BN 层的均值/方差被更新
+    module_to_check = model.module if hasattr(model, 'module') else model
+    if not any(p.requires_grad for p in module_to_check.convnext.parameters()):
+        module_to_check.convnext.eval()
+    if not any(p.requires_grad for p in module_to_check.segformer.parameters()):
+        module_to_check.segformer.eval()
 
     metric_logger = misc.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))

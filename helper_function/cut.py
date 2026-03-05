@@ -16,9 +16,9 @@ def cut_file_lines(input_path, output_path, end_line):
 
 
 if __name__ == "__main__":
-    input_file = r"E:\!project dataset\data_list\wild_test\wild_test.json"
-    output_file = r"E:\!project dataset\data_list\wild_test\wild_test_2.json"
-    line_number = 5246  # 截取到第100行（包含）
+    input_file = r"E:\!project dataset\data_list\val\0000.json"
+    output_file = r"E:\!project dataset\data_list\val\0000_cc.json"
+    line_number = 47385  # 截取到第100行（包含）
 
     cut_file_lines(input_file, output_file, line_number)
     print("文件截取完成")
