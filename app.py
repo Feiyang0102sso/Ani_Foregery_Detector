@@ -14,7 +14,7 @@ print("⏳ 正在唤醒 AniXplore 满级大脑...")
 model = MODELS.get('AniXplore')(image_size=512, seg_pretrain_path=None)
 
 # 1.2 加载权重文件 (设置 weights_only=False 绕过 PyTorch 2.6 的安全拦截)
-ckpt = torch.load("my_source_model\checkpoint-8.pth", map_location=device, weights_only=False)
+ckpt = torch.load("my_source_model\checkpoint-5.pth", map_location=device, weights_only=False)
 # "my_new_shearlet_model/checkpoint-8.pth",
 # CKPTS/AniXplore/checkpoint-29.pth
 # my_mixed_model/
