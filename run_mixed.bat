@@ -17,6 +17,7 @@ python run/train-AniXplore.py ^
     --edited_img_data_root "E:/!project dataset/fake_images" ^
 	--checkpoint_path CKPTS/AniXplore/checkpoint-29.pth ^
     --batch_size 4 ^
+    --test_batch_size 8 ^
     --accum_iter 1 ^
     --num_workers 4 ^
     --lr 1e-5 ^

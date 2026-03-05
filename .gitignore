@@ -22,3 +22,5 @@ output_dir/
 *.zip
 
 *_model/
+
+dataset_report.txt

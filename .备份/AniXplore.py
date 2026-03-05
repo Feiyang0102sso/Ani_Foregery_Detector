@@ -739,36 +739,22 @@ class AniXplore(nn.Module):
             top_block=None,
             norm="LN",
             )
-        # ============ Adapter MLP ============
-        # Frozen backbone features are domain-specific to author's dataset.
-        # A single Linear(384,1) cannot remap them for wild images.
-        # This adapter has enough capacity (~115K params) to translate
-        # frozen features into a classification-friendly space.
-        # It ONLY serves cls_head and source_head, completely isolated
-        # from the inpainting mask pipeline (featurePyramid_net).
-        self.cls_adapter = nn.Sequential(
+        self.cls_head = nn.Sequential(
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.Linear(384, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Linear(384, 1) # combine 5 maps, channel = 384
         )
 
-        # Simplified heads: take adapter's 128-dim output
-        self.cls_head = nn.Linear(128, 1)
-
-        # Source tracing head (4 classes: 0=Real, 1=FLUX, 2=SDXL, 3=SD)
-        # 独立 MLP，直接吃 fused_feat (384维)，不经过 cls_adapter
+        # add new 溯源分类头 (4个类别: 0=Real, 1=FLUX, 2=SDXL, 3=SD)
+        # [加强版] 溯源分类头
+        # 既然主干特征是冻结的，我们需要一个两层的 MLP 来消化这些特征，并加入 Dropout 防止小样本死记硬背
         self.source_head = nn.Sequential(
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.Linear(384, 128),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(128, 4)
+            nn.Linear(384, 128),  # 增加一个隐藏层进行特征过渡
+            nn.ReLU(),  # 激活函数增加非线性
+            nn.Dropout(0.5),  # 50% 随机失活，强迫模型学习通用规律，解决实测准确率低的问题！
+            nn.Linear(128, 4)  # 最后输出 4 个类别
         )
 
 
@@ -814,21 +800,29 @@ class AniXplore(nn.Module):
         mask_pred = torch.sigmoid(pred_mask)
 
 
-        # ===== Classification through trainable adapter =====
-        cls_features = self.cls_adapter(fused_feat)  # [B, 128]
-
-        raw_cls_logit = self.cls_head(cls_features)  # [B, 1]
+        raw_cls_logit = self.cls_head(fused_feat)
         label = label.float()
-        cls_loss = F.binary_cross_entropy_with_logits(raw_cls_logit.squeeze(-1), label)
+        cls_loss = F.binary_cross_entropy_with_logits(raw_cls_logit[:, -1, ...], label)
+        #  get pred_label
+        # print("\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        # print(f'raw_cls_logit={raw_cls_logit}')
+        # cls_logit = torch.softmax(raw_cls_logit, dim=1)
+        # pred_label = cls_logit[:, -1, ...]
+        # print(f'cls_logit={cls_logit}')
+        # print(f'pred_label={pred_label}')
+        pred_label_prob_2d = torch.sigmoid(raw_cls_logit)  # Shape: [batch_size, 1]
+        pred_label_prob_1d = pred_label_prob_2d.squeeze(-1)    # Shape: [batch_size]
+        pred_label_binary = (pred_label_prob_1d > 0.5).float()
+        
+        # print(f'pred_label_prob = {pred_label_prob}')
+        # print(f'pred_label_binary = {pred_label_binary}')
 
-        pred_label_prob = torch.sigmoid(raw_cls_logit.squeeze(-1))  # [B]
-        pred_label_binary = (pred_label_prob > 0.5).float()
-
-        # ===== Source tracing: 独立分支，直接从 fused_feat 获取特征 =====
+        # add new 溯源分支的预测与 Loss 计算
+        # 当 source_head 被冻结但你仍在训练 backbone 时，source_loss 会继续把梯度回传到 fused_feat，
+        # 从而“干扰”其它能力。通过 disable_source_loss 可以将该分支从反向中剥离，仅保留推理/日志。
         disable_source_loss = bool(kwargs.get("disable_source_loss", False))
         source_feat = fused_feat.detach() if disable_source_loss else fused_feat
-
-        raw_source_logit = self.source_head(source_feat)  # [B, 4]
+        raw_source_logit = self.source_head(source_feat)
         if source_label is not None:
             # CrossEntropyLoss 内部自带 Softmax，传入 long 类型的 label 即可
             source_loss = F.cross_entropy(raw_source_logit, source_label.long())
@@ -838,10 +832,10 @@ class AniXplore(nn.Module):
         # 得到 0,1,2,3 的预测类别
         pred_source = torch.argmax(raw_source_logit, dim=1)
 
-        combined_loss = self.auto_weight(loss, cls_loss, source_loss)
-
-        # ================== 【修改结束】 ==================
-
+        # 把 source_loss 加入自动权重计算中
+        # combined_loss = self.auto_weight(loss, cls_loss)
+        source_loss_for_backward = torch.zeros_like(source_loss) if disable_source_loss else source_loss
+        combined_loss = self.auto_weight(loss, cls_loss, source_loss_for_backward)
 
         output_dict = {
             # loss for backward
@@ -850,8 +844,6 @@ class AniXplore(nn.Module):
             "pred_mask": mask_pred,
             # predicted binaray label, will calculate for metrics automatically
             "pred_label": pred_label_binary,
-            # predicted label probability (for inference UI confidence display)
-            "pred_label_prob": pred_label_prob,
             #  [新增] 输出溯源预测结果
             "pred_source": pred_source,
             # 把原始输出传给 UI 计算百分比
