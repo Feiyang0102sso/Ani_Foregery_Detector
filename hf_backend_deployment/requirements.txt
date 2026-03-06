@@ -22,4 +22,4 @@ appdirs
 scikit-learn
 
 # Auto-Download the Network Architecture from GitHub Repo
-git+https://github.com/ZiweikWang/AnimeDL2M.git#subdirectory=AniXplore
+git+https://github.com/Feiyang0102sso/Ani_Foregery_Detector.git
