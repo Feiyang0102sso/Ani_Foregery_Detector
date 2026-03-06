@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: 'Rajdhani', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+@layer base {
+
+  /* 
+    Implementing Light / Dark mode properly via Tailwind V4. 
+    By default (Light)
+  */
+  :root {
+    --bg-primary: #ffffff;
+    --bg-panel: rgba(240, 242, 245, 0.85);
+    --border-panel: rgba(0, 0, 0, 0.25);
+    --text-primary: #000000;
+    --text-muted: #4a5568;
+    --grid-color: rgba(0, 0, 0, 0.08);
+
+    --color-cyber-cyan: #008066;
+    --color-cyber-red: #d30030;
+    --color-cyber-warning: #cc8e00;
+  }
+
+  /* Dark Mode specific overrides */
+  html.dark {
+    --bg-primary: #050505;
+    --bg-panel: rgba(15, 15, 20, 0.85);
+    --border-panel: rgba(100, 115, 130, 0.6);
+    --text-primary: #ffffff;
+    --text-muted: #a0aec0;
+    --grid-color: rgba(255, 255, 255, 0.1);
+
+    --color-cyber-cyan: #00ffcc;
+    --color-cyber-red: #ff2a5f;
+    --color-cyber-warning: #ffb800;
+  }
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  transition: background-color 0.3s ease, color 0.3s ease;
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Base custom styles to retain the industrial aesthetic */
+.glass-panel {
+  background: var(--bg-panel);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-panel);
+}
+
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.03;
+  background-image: url('data:image/svg+xml,%3Csvg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noiseFilter"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23noiseFilter)"/%3E%3C/svg%3E');
+}
+
+.bg-grid-pattern {
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 40px 40px;
+  z-index: -1;
+  mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
+  -webkit-mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
+}

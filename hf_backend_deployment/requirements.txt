@@ -1,0 +1,25 @@
+# Core PyTorch
+torch
+torchvision
+
+# Model Architecture Dependencies
+timm
+
+# Image Processing & Augmentations
+opencv-python-headless
+
+# Scientific & Array operations
+numpy<2
+
+# API / Web Interface
+gradio
+
+# IMDLBenCo Hardcoded Shim Dependencies (To prevent top-level import crash)
+rich
+matplotlib
+colorama
+appdirs
+scikit-learn
+
+# Auto-Download the Network Architecture from GitHub Repo
+git+https://github.com/ZiweikWang/AnimeDL2M.git#subdirectory=AniXplore

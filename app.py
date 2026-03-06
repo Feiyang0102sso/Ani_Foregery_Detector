@@ -14,7 +14,7 @@ print("⏳ 正在唤醒 AniXplore 满级大脑...")
 model = MODELS.get('AniXplore')(image_size=512, seg_pretrain_path=None)
 
 # 1.2 加载权重文件 (设置 weights_only=False 绕过 PyTorch 2.6 的安全拦截)
-ckpt = torch.load("my_source_model\checkpoint-5.pth", map_location=device, weights_only=False)
+ckpt = torch.load("my_source_model\checkpoint-8.pth", map_location=device, weights_only=False)
 # "my_new_shearlet_model/checkpoint-8.pth",
 # CKPTS/AniXplore/checkpoint-29.pth
 # my_mixed_model/
@@ -88,10 +88,13 @@ def predict_image(image):
 
             # 获取溯源的真实置信度 (需要模型在 output_dict 里返回 raw_source_logit)
             if 'raw_source_logit' in preds:
-                probs = torch.softmax(preds['raw_source_logit'], dim=1)[0]
-                source_conf = float(probs[source_idx].item()) * 100
+                source_probs = torch.softmax(preds['raw_source_logit'], dim=1)[0]
+                source_conf = float(source_probs[source_idx].item()) * 100
+                # 保存全部 4 个类别的概率
+                all_source_probs = {k: float(source_probs[i].item()) * 100 for i, k in SOURCE_MAP.items()}
             else:
-                source_conf = 99.99  # 如果没返回 logit，默认给个高确信度占位
+                source_conf = 99.99
+                all_source_probs = None
 
         # 兼容旧版本的列表/元组返回格式
         if mask_logits is None:
@@ -174,7 +177,12 @@ def predict_image(image):
 
     report += f"▸ AI生成概率 (cls_head): {cls_confidence:.2f}%\n"
     report += f"▸ 局部篡改置信度 (mask): {mask_confidence:.2f}%\n"
-    report += f"▸ 图像来源判定: {source_name} (置信度: {source_conf:.2f}%)"
+    report += f"▸ 图像来源判定: {source_name} (置信度: {source_conf:.2f}%)\n"
+    if all_source_probs:
+        report += f"  ├─ Real(手绘): {all_source_probs.get('真实人类手绘 (Real)', 0):.1f}%\n"
+        report += f"  ├─ FLUX: {all_source_probs.get('FLUX 生成', 0):.1f}%\n"
+        report += f"  ├─ SDXL: {all_source_probs.get('SDXL 生成', 0):.1f}%\n"
+        report += f"  └─ SD:   {all_source_probs.get('Stable Diffusion (SD) 生成', 0):.1f}%"
 
     # 返回叠加图、报告、以及原始概率图供交互查询
     return overlay, report, raw_mask_resized

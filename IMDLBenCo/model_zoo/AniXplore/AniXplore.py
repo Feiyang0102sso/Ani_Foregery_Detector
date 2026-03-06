@@ -760,16 +760,22 @@ class AniXplore(nn.Module):
         # Simplified heads: take adapter's 128-dim output
         self.cls_head = nn.Linear(128, 1)
 
-        # Source tracing head (4 classes: 0=Real, 1=FLUX, 2=SDXL, 3=SD)
-        # 独立 MLP，直接吃 fused_feat (384维)，不经过 cls_adapter
-        self.source_head = nn.Sequential(
+        # ============ Source Adapter ============
+        # 和 cls_adapter 同理，但专门为 source tracing 服务
+        # Phase 2 时解冻训练，让它学会从冻结 backbone 中提取源模型特征
+        self.source_adapter = nn.Sequential(
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.Linear(384, 128),
+            nn.Linear(384, 256),
             nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(128, 4)
+            nn.Dropout(0.3),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
         )
+
+        # Source tracing head (4 classes: 0=Real, 1=FLUX, 2=SDXL, 3=SD)
+        self.source_head = nn.Linear(128, 4)
 
 
         # 为现在有3个loss (loss, cls_loss, source_loss)，将 num 改为 3
@@ -824,11 +830,11 @@ class AniXplore(nn.Module):
         pred_label_prob = torch.sigmoid(raw_cls_logit.squeeze(-1))  # [B]
         pred_label_binary = (pred_label_prob > 0.5).float()
 
-        # ===== Source tracing: 独立分支，直接从 fused_feat 获取特征 =====
+        # ===== Source tracing: 经过独立 source_adapter =====
         disable_source_loss = bool(kwargs.get("disable_source_loss", False))
-        source_feat = fused_feat.detach() if disable_source_loss else fused_feat
-
-        raw_source_logit = self.source_head(source_feat)  # [B, 4]
+        source_input = fused_feat.detach() if disable_source_loss else fused_feat
+        source_features = self.source_adapter(source_input)  # [B, 128]
+        raw_source_logit = self.source_head(source_features)  # [B, 4]
         if source_label is not None:
             # CrossEntropyLoss 内部自带 Softmax，传入 long 类型的 label 即可
             source_loss = F.cross_entropy(raw_source_logit, source_label.long())

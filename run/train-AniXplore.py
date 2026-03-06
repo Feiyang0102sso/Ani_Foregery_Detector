@@ -469,8 +469,8 @@ def main(args, model_args):
         # 2. 根据模式精准解冻
         if args.train_source_only:
             # ===== Phase 2: 只训练溯源头 =====
-            print("🎯 [Phase 2] 只训练 source_head + auto_weight，其余全部冻结")
-            trainable_modules = ['source_head', 'auto_weight']
+            print("🎯 [Phase 2] 只训练 source_head + source_adapter + auto_weight，其余全部冻结")
+            trainable_modules = ['source_head', 'source_adapter', 'auto_weight']
         else:
             # ===== Phase 1 (默认): 训练 mask + cls，冻结 source_head =====
             args.disable_source_loss = True
