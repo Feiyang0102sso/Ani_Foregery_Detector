@@ -96,14 +96,7 @@ onBeforeUnmount(() => {
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
 });
 
-// Watch analysis state to clear preview when state goes back to awaiting
-watch(() => props.analysisState, (newVal) => {
-  if (newVal === 'awaiting') {
-    if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
-    previewUrl.value = '';
-    if (fileInput.value) fileInput.value.value = '';
-  }
-});
+
 
 const triggerFileInput = () => {
   if (props.analysisState === 'awaiting' && fileInput.value) {
@@ -158,7 +151,14 @@ const handleImageClick = (e) => {
   }
 };
 
+let activeProbePing = null;
+
 const createProbePing = (x, y) => {
+  // Remove existing probe if any
+  if (activeProbePing) {
+    activeProbePing.remove();
+  }
+
   const ping = document.createElement('div');
   Object.assign(ping.style, {
     position: 'fixed',
@@ -172,17 +172,53 @@ const createProbePing = (x, y) => {
     zIndex: '9999',
     transition: 'all 0.5s cubic-bezier(0.1, 0.9, 0.2, 1)',
     transform: 'scale(1)',
-    opacity: '1'
+    opacity: '1',
+    boxShadow: '0 0 10px rgba(0, 255, 204, 0.5)'
   });
   
+  // Create an inner crosshair for precision feel
+  const innerDot = document.createElement('div');
+  Object.assign(innerDot.style, {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    width: '4px',
+    height: '4px',
+    backgroundColor: 'var(--color-cyber-red)',
+    transform: 'translate(-50%, -50%)',
+    borderRadius: '50%'
+  });
+  ping.appendChild(innerDot);
+
   document.body.appendChild(ping);
+  activeProbePing = ping;
   
+  // Optional: add a tiny initial pulse animation then settle
   requestAnimationFrame(() => {
-    ping.style.transform = 'scale(3)';
-    ping.style.opacity = '0';
-    setTimeout(() => ping.remove(), 500);
+    ping.style.transform = 'scale(1.5)';
+    setTimeout(() => {
+        if (activeProbePing === ping) ping.style.transform = 'scale(1)';
+    }, 150);
   });
 };
+
+// Clean up persistent probe when component unmounts or image clears
+watch(() => props.analysisState, (newVal) => {
+  if (newVal === 'awaiting') {
+    if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
+    previewUrl.value = '';
+    if (fileInput.value) fileInput.value.value = '';
+    if (activeProbePing) {
+      activeProbePing.remove();
+      activeProbePing = null;
+    }
+  }
+});
+
+onBeforeUnmount(() => {
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
+  if (activeProbePing) activeProbePing.remove();
+});
 </script>
 
 <style scoped>

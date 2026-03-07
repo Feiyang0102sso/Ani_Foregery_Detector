@@ -18,7 +18,7 @@
       <DataPanel 
         :analysis-state="state"
         :file="selectedFile"
-        :report="reportText"
+        :report-data="reportData"
         :probe-val="probeValue"
         :danger-level="dangerLevel"
         @execute="handleExecute"
@@ -44,7 +44,7 @@ const state = ref('awaiting');
 const selectedFile = ref(null);
 const overlayUrl = ref('');
 const rawMaskData = ref(null);
-const reportText = ref('');
+const reportData = ref(null);
 const probeValue = ref('--.--%');
 const dangerLevel = ref('safe'); // 'safe' | 'warning' | 'danger'
 const apiUrl = ref('https://feiyang0102-ani-foregery-detector.hf.space');
@@ -54,7 +54,7 @@ const handleImageSelect = (file) => {
   state.value = 'ready';
   overlayUrl.value = '';
   rawMaskData.value = null;
-  reportText.value = '';
+  reportData.value = null;
   probeValue.value = '--.--%';
   dangerLevel.value = 'safe';
 };
@@ -64,7 +64,7 @@ const handleClear = () => {
   state.value = 'awaiting';
   overlayUrl.value = '';
   rawMaskData.value = null;
-  reportText.value = '';
+  reportData.value = null;
   probeValue.value = '--.--%';
   dangerLevel.value = 'safe';
 };
@@ -81,18 +81,17 @@ const handleExecute = async () => {
   if (!selectedFile.value) return;
   
   state.value = 'analyzing';
-  reportText.value = `Establishing uplink to Remote Node [${apiUrl.value}]...\nUploading image tensor...`;
+  reportData.value = null;
   
   try {
     const app = await client(apiUrl.value);
-    reportText.value += "\nUplink established. Executing Shearlet Deep-Forgery Analysis...";
     
     const result = await app.predict("/predict", [
       selectedFile.value,
     ]);
     
     const overlayData = result.data[0];
-    const reportRaw = result.data[1];
+    const reportObj = result.data[1];
     rawMaskData.value = result.data[2];
     
     if (overlayData && overlayData.url) {
@@ -101,20 +100,28 @@ const handleExecute = async () => {
       overlayUrl.value = overlayData; 
     }
     
-    reportText.value = reportRaw;
+    // Parse if it came back as string, else use direct
+    if (typeof reportObj === 'string') {
+        try {
+            reportData.value = JSON.parse(reportObj);
+        } catch(e) {
+            console.error("Failed to parse report JSON", e);
+            reportData.value = reportObj; // fallback
+        }
+    } else {
+        reportData.value = reportObj;
+    }
+
     state.value = 'done';
     
-    if (reportRaw.includes("🚨")) {
-      dangerLevel.value = 'danger';
-    } else if (reportRaw.includes("⚠️")) {
-      dangerLevel.value = 'warning';
+    if (reportData.value && typeof reportData.value === 'object') {
+        dangerLevel.value = reportData.value.danger_level || 'safe';
     } else {
-      dangerLevel.value = 'safe';
+        dangerLevel.value = 'safe';
     }
     
   } catch (err) {
     console.error(err);
-    reportText.value = t('report.error') + `${err.message}\n\nPlease verify that the Remote API Node (${apiUrl.value}) is online and CORS is configured.`;
     state.value = 'error';
     dangerLevel.value = 'danger';
   }

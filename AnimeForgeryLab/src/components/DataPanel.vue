@@ -27,8 +27,121 @@
       <div class="text-xs font-bold text-[var(--text-muted)] p-3 border-b border-[var(--border-panel)] bg-black/5 dark:bg-white/5 tracking-wider font-mono uppercase">
         {{ $t('data.reportLabel') }}
       </div>
-      <div class="p-5 text-base font-bold leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap overflow-y-auto flex-1 font-mono">
-        {{ report || $t('data.reportWait') }}
+      <!-- When no data yet -->
+      <div v-if="!reportData" class="flex flex-col justify-center items-center p-8 gap-4 opacity-50">
+        <i class="ri-pie-chart-line text-4xl"></i>
+        <span class="font-mono text-sm tracking-widest uppercase">{{ $t('data.reportWait') }}</span>
+      </div>
+      
+      <!-- Visualization Report -->
+      <div v-else class="flex flex-col md:flex-row gap-6 p-6 animate-fade-in">
+        
+        <!-- Left: Overall Probability (Circular Progress) -->
+        <div class="flex-1 shrink-0 flex flex-col items-center justify-center gap-4 border-r-0 md:border-r border-[var(--border-panel)] pr-0 md:pr-6">
+          <div class="relative w-40 h-40">
+            <!-- SVG Circular Progress Bar -->
+            <svg class="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+              <!-- Background Circle -->
+              <circle 
+                cx="50" cy="50" r="45" 
+                fill="none" 
+                stroke="currentColor" 
+                stroke-width="8" 
+                class="text-[var(--border-panel)] opacity-30"
+              />
+              <!-- Foreground Progress Circle -->
+              <circle 
+                cx="50" cy="50" r="45" 
+                fill="none" 
+                stroke="currentColor" 
+                stroke-width="8" 
+                stroke-linecap="round"
+                :stroke-dasharray="283"
+                :stroke-dashoffset="283 - (283 * (reportData.overall_ai_prob || 0)) / 100"
+                class="transition-all duration-1000 ease-out"
+                :class="{
+                  'text-[var(--color-cyber-cyan)]': reportData.danger_level === 'safe',
+                  'text-[var(--color-cyber-warning)]': reportData.danger_level === 'warning',
+                  'text-[var(--color-cyber-red)]': reportData.danger_level === 'danger'
+                }"
+              />
+            </svg>
+            <!-- Center Text -->
+            <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span class="text-3xl font-display font-extrabold"
+                :class="{
+                  'text-[var(--color-cyber-cyan)]': reportData.danger_level === 'safe',
+                  'text-[var(--color-cyber-warning)]': reportData.danger_level === 'warning',
+                  'text-[var(--color-cyber-red)]': reportData.danger_level === 'danger'
+                }">
+                {{ reportData.overall_ai_prob ? reportData.overall_ai_prob.toFixed(1) : 0 }}%
+              </span>
+              <span class="text-xs font-bold text-[var(--text-muted)] tracking-widest uppercase mt-1">AI PROB</span>
+            </div>
+          </div>
+          
+          <div class="text-center">
+            <p class="text-[10px] text-[var(--text-muted)] mt-2 font-mono uppercase tracking-[0.15em] leading-relaxed max-w-[160px] mx-auto opacity-80">
+              <span class="text-[var(--color-cyber-cyan)] font-extrabold block" v-if="reportData.danger_level === 'safe'">We are highly confident this is a Human made image</span>
+              <span class="text-[var(--color-cyber-red)] font-extrabold block" v-else-if="reportData.danger_level === 'danger'">We are highly confident this is an AI image</span>
+              <span class="text-[var(--color-cyber-warning)] font-extrabold block" v-else>We are moderately confident this is an AI image</span>
+            </p>
+          </div>
+        </div>
+
+        <!-- Right: Detail Metrics -->
+        <div class="flex-1 flex flex-col gap-4 justify-center">
+          
+          <!-- Local Tampering Risk -->
+          <div class="flex flex-col gap-1">
+            <div class="flex justify-between items-end mb-1">
+              <span class="text-xs font-mono font-bold tracking-widest text-[var(--text-muted)] uppercase">Local Tampering Risk</span>
+              <span class="text-sm font-display font-bold text-[var(--text-primary)]">{{ reportData.local_tamper_prob ? reportData.local_tamper_prob.toFixed(1) : 0 }}%</span>
+            </div>
+            <div class="h-2 w-full bg-black/20 dark:bg-white/10 rounded-full overflow-hidden">
+              <div 
+                class="h-full transition-all duration-1000 rounded-full" 
+                :class="{
+                  'bg-[var(--color-cyber-cyan)]': (reportData.local_tamper_prob || 0) < 45,
+                  'bg-[var(--color-cyber-warning)]': (reportData.local_tamper_prob || 0) >= 45 && (reportData.local_tamper_prob || 0) < 70,
+                  'bg-[var(--color-cyber-red)]': (reportData.local_tamper_prob || 0) >= 70
+                }"
+                :style="`width: ${reportData.local_tamper_prob || 0}%`"
+              ></div>
+            </div>
+          </div>
+
+          <!-- Source Prediction (Donut Chart) -->
+          <div class="bg-black/5 dark:bg-white/5 p-4 rounded-md border border-[var(--border-panel)] mt-2 flex items-center justify-between gap-4">
+            <div class="flex flex-col gap-2 w-[140px]">
+              <div class="text-[10px] font-mono font-bold tracking-[0.15em] text-[var(--text-muted)] uppercase mb-1">
+                Generator Source
+              </div>
+              <div v-for="(prob, sourceStr) in (reportData.all_source_probs || {})" :key="sourceStr" class="flex items-center gap-2">
+                 <div class="w-2 h-2 rounded-full shrink-0" 
+                      :class="{
+                        'bg-[var(--color-cyber-cyan)]': sourceStr.includes('Human') || sourceStr.includes('Real'),
+                        'bg-[var(--color-cyber-red)]': sourceStr === 'SDXL' || sourceStr.includes('SDXL'),
+                        'bg-[var(--color-cyber-warning)]': sourceStr.includes('FLUX'),
+                        'bg-[#a855f7]': sourceStr === 'SD' || (!sourceStr.includes('Human') && sourceStr !== 'SDXL' && !sourceStr.includes('FLUX'))
+                      }">
+                 </div>
+                 <div class="flex-1 text-[10px] font-bold truncate text-[var(--text-primary)]" :title="sourceStr">
+                    {{ sourceStr }}
+                 </div>
+                 <div class="text-right text-[10px] font-mono text-[var(--text-muted)]">{{ prob.toFixed(1) }}%</div>
+              </div>
+            </div>
+            
+            <!-- CSS Donut Chart -->
+            <div class="relative w-24 h-24 shrink-0 rounded-full flex items-center justify-center bg-[var(--bg-primary)]"
+                 :style="getDonutGradient(reportData.all_source_probs)">
+               <!-- Inner cut out -->
+               <div class="absolute w-16 h-16 bg-[var(--bg-primary)] rounded-full border-4 border-black/5 dark:border-white/5"></div>
+            </div>
+          </div>
+
+        </div>
       </div>
     </div>
 
@@ -135,7 +248,7 @@ import { ref } from 'vue';
 defineProps({
   analysisState: String,
   file: File,
-  report: String,
+  reportData: Object,
   probeVal: String,
   dangerLevel: String
 });
@@ -148,7 +261,7 @@ const cloudUrl = 'https://feiyang0102-ani-foregery-detector.hf.space';
 
 // Initialize with the cloud URL directly making it the default
 const currentApiUrl = ref(cloudUrl);
-const tempApiUrl = ref('http://127.0.0.1:7860');
+const tempApiUrl = ref('http://127.0.0.1:7865');
 
 const saveApi = () => {
   if (activeTab.value === 'cloud') {
@@ -162,6 +275,41 @@ const saveApi = () => {
     }
   }
   showModal.value = false;
+};
+
+// Helper for CSS Donut Chart
+const getDonutGradient = (probs) => {
+  if (!probs || Object.keys(probs).length === 0) return 'background: var(--border-panel)';
+  
+  let currentStart = 0;
+  
+  const colors = {
+    'Human': 'var(--color-cyber-cyan)',
+    'SDXL': 'var(--color-cyber-red)',
+    'FLUX': 'var(--color-cyber-warning)',
+    'SD': '#a855f7' // vivid purple hex to avoid undefined css var
+  };
+
+  const getSourceColor = (src) => {
+    if (src.includes('Human') || src.includes('Real')) return colors['Human'];
+    if (src === 'SDXL' || src.includes('SDXL')) return colors['SDXL'];
+    if (src.includes('FLUX')) return colors['FLUX'];
+    return colors['SD'];
+  };
+
+  const segments = [];
+  Object.entries(probs).forEach(([src, val]) => {
+    if (val > 0) {
+      const color = getSourceColor(src);
+      const endPoint = currentStart + val;
+      segments.push(`${color} ${currentStart}% ${endPoint}%`);
+      currentStart = endPoint;
+    }
+  });
+  
+  if (segments.length === 0) return 'background: var(--border-panel)';
+  
+  return `background: conic-gradient(${segments.join(', ')})`;
 };
 </script>
 

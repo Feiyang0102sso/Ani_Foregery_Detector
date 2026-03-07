@@ -41,10 +41,10 @@ transform = Compose([
 ])
 
 SOURCE_MAP = {
-    0: "真实人类手绘 (Real)",
-    1: "FLUX 生成",
-    2: "SDXL 生成",
-    3: "Stable Diffusion (SD) 生成"
+    0: "By Human",
+    1: "FLUX",
+    2: "SDXL",
+    3: "SD"
 }
 
 # ================= 3. 核心预测与热力图绘制 (Inference & Visualization) =================
@@ -156,23 +156,22 @@ def api_predict(image):
         source_name = SOURCE_MAP.get(source_idx, "未知来源")
 
         if final_confidence >= 70:
-            if is_whole_image_ai:
-                report = f"🚨 危险：高度疑似 AI 整图生成！\n"
-            else:
-                report = f"🚨 危险：高度疑似局部 AI 重绘！\n"
+            danger_level = 'danger'
         elif 45 <= final_confidence < 70:
-            report = f"⚠️ 可疑：检测到 AI 生成痕迹。\n"
+            danger_level = 'warning'
         else:
-            report = f"✅ 安全：大概率为真实人类手绘作品。\n"
+            danger_level = 'safe'
 
-        report += f"▸ AI生成概率 (cls_head): {cls_confidence:.2f}%\n"
-        report += f"▸ 局部篡改置信度 (mask): {mask_confidence:.2f}%\n"
-        report += f"▸ 图像来源判定: {source_name} (置信度: {source_conf:.2f}%)\n"
-        if all_source_probs:
-            report += f"  ├─ Real(手绘): {all_source_probs.get('真实人类手绘 (Real)', 0):.1f}%\n"
-            report += f"  ├─ FLUX: {all_source_probs.get('FLUX 生成', 0):.1f}%\n"
-            report += f"  ├─ SDXL: {all_source_probs.get('SDXL 生成', 0):.1f}%\n"
-            report += f"  └─ SD:   {all_source_probs.get('Stable Diffusion (SD) 生成', 0):.1f}%"
+        report_data = {
+            "overall_ai_prob": cls_confidence,
+            "local_tamper_prob": mask_confidence,
+            "final_decision_score": final_confidence,
+            "danger_level": danger_level,
+            "is_whole_image_ai": bool(is_whole_image_ai),
+            "source_name": source_name,
+            "source_conf": source_conf,
+            "all_source_probs": all_source_probs if all_source_probs else {}
+        }
 
         # The resulting `overlay` is correctly RGB here.
         # But when returning it as a Numpy array/PIL Image via gr.Image API payload, 
@@ -181,7 +180,7 @@ def api_predict(image):
         overlay_pil = Image.fromarray(overlay.astype('uint8'), 'RGB')
         raw_mask_data = raw_mask_resized.tolist()
         
-        return overlay_pil, report, raw_mask_data
+        return overlay_pil, report_data, raw_mask_data
     except Exception as e:
         import traceback
         return None, f"Analysis Error: {str(e)}\n{traceback.format_exc()}", []
@@ -191,7 +190,7 @@ with gr.Blocks() as app:
     # Use standard components merely as API entry points
     img_input = gr.Image(type="numpy")
     img_overlay = gr.Image(type="pil")
-    txt_report = gr.Textbox()
+    txt_report = gr.JSON()
     json_mask = gr.JSON()
     
     btn = gr.Button("API Trigger", visible=False)
@@ -203,4 +202,4 @@ with gr.Blocks() as app:
     )
 
 if __name__ == "__main__":
-    app.launch(server_name="0.0.0.0", server_port=7860)
+    app.launch(server_name="0.0.0.0", server_port=7865)
