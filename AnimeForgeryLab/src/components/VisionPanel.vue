@@ -169,7 +169,7 @@ const createProbePing = (x, y) => {
     border: '2px solid var(--color-cyber-cyan)',
     borderRadius: '50%',
     pointerEvents: 'none',
-    zIndex: '9999',
+    zIndex: '900', // Lower than the modal's z-index (1000)
     transition: 'all 0.5s cubic-bezier(0.1, 0.9, 0.2, 1)',
     transform: 'scale(1)',
     opacity: '1',
