@@ -47,7 +47,7 @@ const rawMaskData = ref(null);
 const reportText = ref('');
 const probeValue = ref('--.--%');
 const dangerLevel = ref('safe'); // 'safe' | 'warning' | 'danger'
-const apiUrl = ref('http://127.0.0.1:7860');
+const apiUrl = ref('https://feiyang0102-ani-foregery-detector.hf.space');
 
 const handleImageSelect = (file) => {
   selectedFile.value = file;
@@ -81,7 +81,7 @@ const handleExecute = async () => {
   if (!selectedFile.value) return;
   
   state.value = 'analyzing';
-  reportText.value = "Establishing uplink to Remote Node...\nUploading image tensor...";
+  reportText.value = `Establishing uplink to Remote Node [${apiUrl.value}]...\nUploading image tensor...`;
   
   try {
     const app = await client(apiUrl.value);

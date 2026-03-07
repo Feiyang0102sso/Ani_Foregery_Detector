@@ -49,22 +49,26 @@
         <img 
           ref="sourceImageEl"
           :src="previewUrl" 
-          class="max-w-full max-h-full object-contain absolute"
+          class="max-w-full max-h-full object-contain absolute transition-all duration-500"
+          :class="{ 'brightness-[0.25] blur-sm': analysisState === 'analyzing' }"
           alt="Source"
         >
         <img 
           v-if="heatmapUrl"
           :src="heatmapUrl" 
-          class="max-w-full max-h-full object-contain absolute mix-blend-screen transition-opacity duration-1000"
+          class="max-w-full max-h-full object-contain absolute transition-opacity duration-1000"
           :class="analysisState === 'done' ? 'opacity-100' : 'opacity-0'"
           alt="Heatmap"
         >
         
-        <!-- Scanner Animation -->
+        <!-- Loading Spinner Animation -->
         <div 
-          v-show="analysisState === 'analyzing'"
-          class="absolute left-0 w-full h-1 bg-[var(--color-cyber-cyan)] shadow-[0_0_20px_5px_rgba(0,255,204,0.5)] z-10 animate-[scanPulse_3s_ease-in-out_infinite_alternate]"
-        ></div>
+          v-if="analysisState === 'analyzing'"
+          class="absolute inset-0 flex flex-col justify-center items-center z-20"
+        >
+          <i class="ri-loader-4-line text-6xl text-[var(--color-cyber-cyan)] animate-spin"></i>
+          <span class="mt-4 text-[var(--color-cyber-cyan)] font-mono font-bold tracking-widest animate-pulse">ANALYZING LOGIC...</span>
+        </div>
       </div>
     </div>
   </div>
@@ -182,12 +186,4 @@ const createProbePing = (x, y) => {
 </script>
 
 <style scoped>
-@keyframes scanPulse {
-  0% { top: 0%; opacity: 0; }
-  10% { opacity: 1; }
-  50% { background: var(--color-cyber-cyan); box-shadow: 0 0 20px 5px rgba(0,255,204,0.5); }
-  80% { background: var(--color-cyber-red); box-shadow: 0 0 20px 5px rgba(255,42,95,0.5); }
-  90% { opacity: 1; }
-  100% { top: 100%; opacity: 0; }
-}
 </style>

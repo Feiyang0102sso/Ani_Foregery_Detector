@@ -1,25 +1,24 @@
-# Core PyTorch
+# --- Core AI & PyTorch ---
 torch
 torchvision
-
-# Model Architecture Dependencies
 timm
-
-# Image Processing & Augmentations
-opencv-python-headless
-
-# Scientific & Array operations
-numpy<2
-
-# API / Web Interface
+fvcore
 gradio
 
-# IMDLBenCo Hardcoded Shim Dependencies (To prevent top-level import crash)
-rich
+# --- Image Processing ---
+opencv-python-headless
+albumentations==1.3.0
+
+# --- Scientific & Array ---
+numpy<2
+scikit-learn
 matplotlib
+
+# --- Extractor & Logging Shims ---
+rich
 colorama
 appdirs
-scikit-learn
-
-# Auto-Download the Network Architecture from GitHub Repo
-git+https://github.com/Feiyang0102sso/Ani_Foregery_Detector.git
+ttach
+grad-cam
+tensorboard
+wandb

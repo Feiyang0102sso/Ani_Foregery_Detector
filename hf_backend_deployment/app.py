@@ -1,209 +1,206 @@
 import os
-os.environ['OMP_NUM_THREADS']=str(1)
-from typing import Dict, Tuple
-
-import cv2
-import gradio as gr
-import numpy as np
 import torch
-import torchvision.transforms as transforms
-from PIL import Image
+import cv2
+import numpy as np
+import gradio as gr
+from IMDLBenCo.registry import MODELS
+from albumentations import Compose, Resize, Normalize
+from albumentations.pytorch import ToTensorV2
 
-import IMDLBenCo.model_zoo as model_zoo
+# ================= 1. 加载满级大脑 (模型初始化) =================
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print("⏳ 正在唤醒 AniXplore 满级大脑...")
 
+# 1.1 初始化模型结构 (绕过预训练骨干网络的要求)
+model = MODELS.get('AniXplore')(image_size=512, seg_pretrain_path=None)
 
-class ImageResizeCustom:
-    def __init__(self,
-                 interpolation=cv2.INTER_LINEAR):
-        self.interpolation = interpolation
+# 1.2 兼容云端与本地路径
+ckpt_path = "checkpoint-8_260306_2018.pth" 
+if not os.path.exists(ckpt_path):
+    ckpt_path = r"D:\ZWKUS\CPS 4951\AnimeDL2M-main\AniXplore\IMDLBenCo\my_source_model\checkpoint-8.pth"
 
-    def __call__(self, img):
-        h, w = img.shape[:2]
-        length = 512
-        if h > w:
-            new_h = length
-            new_w = int(w * length / h)
-        else:
-            new_w = length
-            new_h = int(h * length / w)
-        img = cv2.resize(img, (new_w, new_h),
-                         interpolation=self.interpolation)
-        # padding
-        top = (length - new_h) // 2
-        bottom = length - new_h - top
-        left = (length - new_w) // 2
-        right = length - new_w - left
-        img = cv2.copyMakeBorder(img,
-                                 top,
-                                 bottom,
-                                 left,
-                                 right,
-                                 cv2.BORDER_CONSTANT,
-                                 value=[0, 0, 0])
-        self.padding_512 = (top, bottom, left, right)
-        return img
+# 加载权重文件
+ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
-class BaseTransform_Val:
-    def __init__(self):
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406),
-                                 (0.229, 0.224, 0.225))
-        ])
-        
-    def __call__(self, img) -> torch.Tensor:
-        return self.transform(img)
+# 1.3 剥离 DDP 多卡训练留下的 'module.' 前缀字典映射
+state_dict = ckpt['model'] if 'model' in ckpt else ckpt
+state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
 
-def get_model(device: str = "cpu"):
-    num_classes = 15
-    model_cfg = dict(
-        type='AniXplore',
-        in_channels=3,
-        num_classes=num_classes,
-        encoder_name='convnext_tiny',
-        mvt_name='mit_b1',
-        device=device
-    )
-    import collections
-    
-    model = model_zoo.build_source_model(model_cfg)
-    
-    # Load weights via native torch load
-    ckpt_path = "checkpoint-8_260306_2018.pth" # Needs to be uploaded to HF
-    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    
-    # Extract state_dict (handles nested 'model' keys commonly saved in training)
-    state_dict = checkpoint.get("model", checkpoint)
-    
-    # Remove 'module.' prefixes which are an artifact of DistributedDataParallel (DDP)
-    new_state_dict = collections.OrderedDict()
-    for k, v in state_dict.items():
-        name = k.replace("module.", "") if k.startswith("module.") else k
-        new_state_dict[name] = v
-        
-    model.load_state_dict(new_state_dict, strict=False)
-    
-    model.eval()
-    model.to(device)
-    return model
+# 1.4 加载权重至 GPU 并开启评估模式
+model.load_state_dict(state_dict, strict=False)
+model.to(device)
+model.eval()
+print("✅ 模型加载完毕，可以开始检测！")
 
-def load_data(img_np: np.ndarray):
-    resize_trans = ImageResizeCustom()
-    img_512 = resize_trans(img_np)
-    padding_512 = resize_trans.padding_512
-    # convert to rgb
-    img_512 = cv2.cvtColor(img_512, cv2.COLOR_BGR2RGB)
-    
-    val_trans = BaseTransform_Val()
-    img_512_tensor = val_trans(img_512)
-    return img_512_tensor, padding_512
+# ================= 2. 图像预处理流水线 (Data Pipeline) =================
+# 严格按照 AniXplore 训练时的图像均值与标准差进行归一化
+transform = Compose([
+    Resize(512, 512),  
+    Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ToTensorV2()
+])
 
-def convert_label(label: int) -> str:
-    source_map = {
-        0: "真实人类手绘 (Real)",
-        1: "FLUX 生成",
-        2: "SDXL 生成",
-        3: "Stable Diffusion (SD) 生成"
-    }
-    return source_map.get(label, 'Unknown AI Engine')
+SOURCE_MAP = {
+    0: "真实人类手绘 (Real)",
+    1: "FLUX 生成",
+    2: "SDXL 生成",
+    3: "Stable Diffusion (SD) 生成"
+}
 
-
-print("Initializing Headless Backend...")
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-try:
-    model = get_model(DEVICE)
-    print("Model Loaded Successfully!")
-except Exception as e:
-    print(f"Failed to load model logic. Error: {e}")
-    # We still define logic so Gradio won't crash instantly, but it will fail on predict
-    model = None
-
-@torch.no_grad()
-def headless_predict(img):
-    if img is None:
-        return None, "No image provided.", []
+# ================= 3. 核心预测与热力图绘制 (Inference & Visualization) =================
+def api_predict(image):
+    """
+    接收前端网页传来的单张 Numpy 图像，返回渲染好的热力图、检测报告、和原始张量
+    """
+    if image is None:
+        return None, "No Image Provided", []
         
     try:
-        img_np = np.array(img)
-        img_512_tensor, padding_512 = load_data(img_np)
-        img_512_tensor = img_512_tensor.unsqueeze(0).to(DEVICE)
+        from PIL import Image
+        # The input numpy array from pure frontend via API payload might be in an unpredictable channel order.
+        # Explicitly enforce RGB mode discarding potential alpha.
+        if image.shape[-1] == 4:
+            image = image[..., :3] # RGBA to RGB manually
+            
+        # VERY IMPORTANT: Gradio's base gr.Image usually provides RGB, 
+        # but pure API calls with external file inputs might pass BGR if handled by certain OpenCV wrappers on the frontend.
+        # We assume standard RGB payload from the Vue canvas.
+        img_pil = Image.fromarray(image.astype('uint8')).convert("RGB")
+        image = np.array(img_pil)
         
-        # Inference
-        predicts = model(img_512_tensor)
-        
-        # Process results
-        cls_logits = predicts['pred_label']
-        mask_logits = predicts['pred_mask'].cpu()
-        
-        pred_cls = torch.argmax(cls_logits, dim=1).cpu().numpy()[0]
-        pred_prob = torch.softmax(cls_logits, dim=1).cpu().numpy()[0][pred_cls]
-        
-        pred_mask = torch.sigmoid(mask_logits).numpy()[0, 0]
-        
-        # Remove padding from mask
-        top, bottom, left, right = padding_512
-        mask_no_pad = pred_mask[top:512-bottom, left:512-right]
-        
-        # Resize mask back to original image size
-        orig_h, orig_w = img_np.shape[:2]
-        pred_mask_full = cv2.resize(mask_no_pad, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
-        
-        # Generate Heatmap (JET)
-        heatmap = cv2.applyColorMap(np.uint8(255 * (1.0 - pred_mask_full)), cv2.COLORMAP_JET)
-        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-        
-        # Blend Heatmap with original
-        overlay = cv2.addWeighted(img_np, 0.5, heatmap, 0.5, 0)
-        overlay_pil = Image.fromarray(overlay)
-        
-        # Generate Text Report
-        p_str = f"{(pred_prob*100):.2f}%"
-        report_lines = []
-        is_forge = (pred_prob > 0.5)
+        # 获取用户上传原图的真实尺寸，方便后续拉伸热力图
+        original_h, original_w = image.shape[:2]
 
-        if not is_forge:
-             report_lines.append("✅ SAFE: Highly likely authentic human hand-drawn art.\n")
-             report_lines.append(f"▸ AI Gen Probability: {p_str}")
-             report_lines.append("▸ Detected Source Model: Authentic Art")
+        # 洗菜切菜：图像预处理并增加 batch 维度 (H,W,C -> 1,C,H,W)
+        tensor = transform(image=image)['image'].unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            dummy_mask = torch.zeros((1, 1, 512, 512), dtype=torch.float, device=device)
+            dummy_label = torch.zeros((1,), dtype=torch.float, device=device)
+            preds = model(tensor, dummy_mask, dummy_label)
+
+            mask_logits = None
+            source_idx = 0
+            source_conf = 0.0
+            all_source_probs = None
+
+            if isinstance(preds, dict):
+                mask_logits = preds.get('pred_mask', None)
+                cls_prob = 0.0
+                if 'pred_label_prob' in preds:
+                    cls_prob = float(preds['pred_label_prob'].item())
+                elif 'pred_label' in preds:
+                    cls_prob = float(preds['pred_label'].item())
+
+                if 'pred_source' in preds:
+                    source_idx = int(preds['pred_source'].item())
+
+                if 'raw_source_logit' in preds:
+                    source_probs = torch.softmax(preds['raw_source_logit'], dim=1)[0]
+                    source_conf = float(source_probs[source_idx].item()) * 100
+                    all_source_probs = {k: float(source_probs[i].item()) * 100 for i, k in SOURCE_MAP.items()}
+                else:
+                    source_conf = 99.99
+
+            if mask_logits is None:
+                if isinstance(preds, (tuple, list)):
+                    for p in preds:
+                        if len(p.shape) >= 3:
+                            mask_logits = p
+                            break
+                else:
+                    mask_logits = preds
+
+        mask = mask_logits.squeeze().cpu().numpy()
+
+        if mask.ndim == 3:
+            mask = mask[0]
+        elif mask.ndim == 0:
+            mask = np.full((512, 512), mask.item())
+
+        cls_confidence = cls_prob * 100
+        mean_score = float(np.mean(mask)) * 100
+        peak_score = float(np.percentile(mask, 99.5)) * 100
+        suspicious_area_ratio = np.sum(mask > 0.5) / mask.size
+
+        if suspicious_area_ratio > 0.01:
+            mask_confidence = peak_score
         else:
-            if pred_mask_full.mean() > 0.7:
-                 report_lines.append("🚨 DANGER: Highly suspected WHOLE Image AI Generation!\n")
+            mask_confidence = mean_score
+
+        final_confidence = max(cls_confidence, mask_confidence)
+
+        is_whole_image_ai = (cls_confidence > 50) and (suspicious_area_ratio < 0.01)
+
+        if is_whole_image_ai:
+            uniform_mask = np.full((original_h, original_w), cls_prob)
+            mask_resized = uniform_mask
+            raw_mask_resized = uniform_mask
+
+            heatmap = cv2.applyColorMap(np.uint8(255 * mask_resized), cv2.COLORMAP_JET)
+            heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+
+            alpha = np.full((original_h, original_w, 1), 0.4 * cls_prob)
+            overlay = (image * (1 - alpha) + heatmap * alpha).astype(np.uint8)
+        else:
+            clean_mask = np.where(mask > 0.5, mask, 0)
+            mask_resized = cv2.resize(clean_mask, (original_w, original_h))
+            raw_mask_resized = cv2.resize(mask, (original_w, original_h))
+
+            heatmap = cv2.applyColorMap(np.uint8(255 * mask_resized), cv2.COLORMAP_JET)
+            heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+
+            alpha = np.where(mask_resized > 0, 0.4, 0)[..., np.newaxis]
+            overlay = (image * (1 - alpha) + heatmap * alpha).astype(np.uint8)
+
+        source_name = SOURCE_MAP.get(source_idx, "未知来源")
+
+        if final_confidence >= 70:
+            if is_whole_image_ai:
+                report = f"🚨 危险：高度疑似 AI 整图生成！\n"
             else:
-                 report_lines.append("🚨 DANGER: Highly suspected PARTIAL AI Inpainting!\n")
-            report_lines.append(f"▸ AI Gen Probability: {p_str}")
-            report_lines.append(f"▸ Detected Source Model: {convert_label(pred_cls)}")
+                report = f"🚨 危险：高度疑似局部 AI 重绘！\n"
+        elif 45 <= final_confidence < 70:
+            report = f"⚠️ 可疑：检测到 AI 生成痕迹。\n"
+        else:
+            report = f"✅ 安全：大概率为真实人类手绘作品。\n"
 
-        report_str = "\n".join(report_lines)
-        
-        # Pass pure probabilities for the frontend probe
-        raw_mask_data = pred_mask_full.tolist() 
+        report += f"▸ AI生成概率 (cls_head): {cls_confidence:.2f}%\n"
+        report += f"▸ 局部篡改置信度 (mask): {mask_confidence:.2f}%\n"
+        report += f"▸ 图像来源判定: {source_name} (置信度: {source_conf:.2f}%)\n"
+        if all_source_probs:
+            report += f"  ├─ Real(手绘): {all_source_probs.get('真实人类手绘 (Real)', 0):.1f}%\n"
+            report += f"  ├─ FLUX: {all_source_probs.get('FLUX 生成', 0):.1f}%\n"
+            report += f"  ├─ SDXL: {all_source_probs.get('SDXL 生成', 0):.1f}%\n"
+            report += f"  └─ SD:   {all_source_probs.get('Stable Diffusion (SD) 生成', 0):.1f}%"
 
-        return overlay_pil, report_str, raw_mask_data
+        # The resulting `overlay` is correctly RGB here.
+        # But when returning it as a Numpy array/PIL Image via gr.Image API payload, 
+        # Gradio API sometimes incorrectly casts the channels depending on origin type.
+        # Ensure we return a strict PIL RGB image from the numpy array.
+        overlay_pil = Image.fromarray(overlay.astype('uint8'), 'RGB')
+        raw_mask_data = raw_mask_resized.tolist()
         
+        return overlay_pil, report, raw_mask_data
     except Exception as e:
-         return None, f"Analysis Error: {str(e)}", []
+        import traceback
+        return None, f"Analysis Error: {str(e)}\n{traceback.format_exc()}", []
 
-
-# Define Headless Gradio API without complex UI blocks
+# ================= 7. 搭建 Headless API 路由 =================
 with gr.Blocks() as app:
     # Use standard components merely as API entry points
-    img_input = gr.Image(type="pil")
-    img_overlay = gr.Image()
+    img_input = gr.Image(type="numpy")
+    img_overlay = gr.Image(type="pil")
     txt_report = gr.Textbox()
     json_mask = gr.JSON()
     
-    # We do NOT add UI elements or buttons to build an exposed view.
-    # The Gradio Blocks router simply exposes a `/predict` API route automatically.
-    
-    # We create a hidden API binding
     btn = gr.Button("API Trigger", visible=False)
     btn.click(
-        fn=headless_predict,
+        fn=api_predict,
         inputs=[img_input],
         outputs=[img_overlay, txt_report, json_mask],
-        api_name="predict" # MUST be /predict
+        api_name="predict"
     )
 
-if __name__ == '__main__':
-    # Launch for HuggingFace (CORS enabled)
-    app.launch(server_name="0.0.0.0", server_port=7860, show_api=False)
+if __name__ == "__main__":
+    app.launch(server_name="0.0.0.0", server_port=7860)
