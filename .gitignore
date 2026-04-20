@@ -24,3 +24,10 @@ output_dir/
 *_model/
 
 dataset_report.txt
+
+AniXplore_Code_Architecture.md
+model.md
+test_results_confusion/
+paper_scripts/
+count_dataset.py
+_papers/

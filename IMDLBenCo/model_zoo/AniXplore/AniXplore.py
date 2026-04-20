@@ -13,6 +13,7 @@ sys.path.append('.')
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from .dwt_extractor import DwtFrequencyExtractor
 from .dct_extractor import DctFrequencyExtractor
+from .shearlet_extractor import ShearletFrequencyExtractor
 import math
 from functools import partial
 from IMDLBenCo.registry import MODELS
@@ -715,7 +716,8 @@ class AniXplore(nn.Module):
         self.convnext = ConvNeXt(conv_pretrain)
         self.segformer = MixVisionTransformer(seg_pretrain_path)
         self.dct = DctFrequencyExtractor()
-        self.high_dwt = DwtFrequencyExtractor()
+        # self.high_dwt = DwtFrequencyExtractor()
+        self.shearlet = ShearletFrequencyExtractor()
         self.resize = nn.Upsample(size=(image_size, image_size), mode='bilinear', align_corners=True)
         self.loss_fn = nn.BCEWithLogitsLoss()
 
@@ -784,8 +786,10 @@ class AniXplore(nn.Module):
 
     def forward(self, image, mask, label, source_label=None, *args, **kwargs):
         high_dct_freq = self.dct.forward_high(image)
-        high_dwt_freq = self.high_dwt.forward(image)
-        high_freq = high_dct_freq * 0.5 + high_dwt_freq * 0.5
+        # high_dwt_freq = self.high_dwt.forward(image)
+        # high_freq = high_dct_freq * 0.5 + high_dwt_freq * 0.5
+        high_shearlet_freq = self.shearlet(image)
+        high_freq = high_dct_freq * 0.5 + high_shearlet_freq * 0.5
         # print(high_freq.shape)
         low_freq = self.dct.forward_low(image)
         # print(low_freq.shape)

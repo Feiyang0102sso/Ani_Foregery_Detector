@@ -32,10 +32,9 @@ class ImageF1(AbstractEvaluator):
     def epoch_update(self):
         t = torch.tensor([self.TP, self.TN, self.FP, self.FN, self.cnt],  dtype=torch.float64, device='cuda')
 
-        # if dist.is_initialized():
-        dist.barrier()
-
-        dist.all_reduce(t, op=dist.ReduceOp.SUM)
+        if dist.is_initialized():
+            dist.barrier()
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
         TP = t[0].item()
         TN = t[1].item()
         FP = t[2].item()
@@ -237,8 +236,9 @@ class ImagePrecision(AbstractEvaluator):
 
     def epoch_update(self):
         t = torch.tensor([self.TP, self.FP], dtype=torch.float64, device='cuda')
-        dist.barrier()
-        dist.all_reduce(t, op=dist.ReduceOp.SUM)
+        if dist.is_initialized():
+            dist.barrier()
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
         TP = t[0].item()
         FP = t[1].item()
         precision = TP / (TP + FP + 1e-9)
@@ -265,8 +265,9 @@ class ImageRecall(AbstractEvaluator):
 
     def epoch_update(self):
         t = torch.tensor([self.TP, self.FN], dtype=torch.float64, device='cuda')
-        dist.barrier()
-        dist.all_reduce(t, op=dist.ReduceOp.SUM)
+        if dist.is_initialized():
+            dist.barrier()
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
         TP = t[0].item()
         FN = t[1].item()
         recall = TP / (TP + FN + 1e-9)

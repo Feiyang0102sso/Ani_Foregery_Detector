@@ -48,37 +48,33 @@ class ImageAUC(AbstractEvaluator):
         return None
 
     def epoch_update(self):
-        # cnt = torch.tensor(self.cnt, dtype=torch.int64).cuda()
-        cnt = self.cnt.clone().detach().cuda()
-        t_gather_cnt = [torch.zeros(1, dtype=torch.int64, device='cuda') for _ in range(dist.get_world_size())]
-        # if dist.is_initialized():
-        dist.barrier()
-        dist.all_gather(t_gather_cnt, cnt)
-        
-        max_cnt = torch.max(torch.stack(t_gather_cnt, dim=0), dim=0)[0].cuda()
-        max_idx = torch.max(torch.stack(t_gather_cnt, dim=0), dim=0)[1].cuda()
-        if max_cnt > self.cnt:
-            self.predict_label = torch.cat([self.predict_label, torch.zeros(max_cnt-self.cnt, device='cuda')], dim=0)
-            self.label = torch.cat([self.label, torch.zeros(max_cnt-self.cnt, device='cuda')], dim=0)
+        if dist.is_initialized():
+            cnt = self.cnt.view(1).detach().cuda()
+            t_gather_cnt = [torch.zeros(1, dtype=torch.int64, device='cuda') for _ in range(dist.get_world_size())]
+            dist.barrier()
+            dist.all_gather(t_gather_cnt, cnt)
+            
+            max_cnt = torch.max(torch.stack(t_gather_cnt, dim=0), dim=0)[0].cuda()
+            if max_cnt > self.cnt:
+                self.predict_label = torch.cat([self.predict_label, torch.zeros(max_cnt-self.cnt, device='cuda')], dim=0)
+                self.label = torch.cat([self.label, torch.zeros(max_cnt-self.cnt, device='cuda')], dim=0)
 
-        t_label = self.label.float().cuda()
-        t_predict_label = self.predict_label.float().cuda()
+            t_label = self.label.float().cuda()
+            t_predict_label = self.predict_label.float().cuda()
 
-        t_gather_predict_label = [torch.zeros(max_cnt, dtype=torch.float32, device='cuda') for _ in range(dist.get_world_size())]
-        t_gather_label = [torch.zeros(max_cnt, dtype=torch.float32, device='cuda') for _ in range(dist.get_world_size())]
+            t_gather_predict_label = [torch.zeros(max_cnt, dtype=torch.float32, device='cuda') for _ in range(dist.get_world_size())]
+            t_gather_label = [torch.zeros(max_cnt, dtype=torch.float32, device='cuda') for _ in range(dist.get_world_size())]
 
-        # if dist.is_initialized():
-        dist.barrier()
+            dist.barrier()
+            dist.all_gather(t_gather_label, t_label)
+            dist.barrier()
+            dist.all_gather(t_gather_predict_label, t_predict_label)
 
-        dist.all_gather(t_gather_label, t_label)
-
-        # if dist.is_initialized():
-        dist.barrier()
-
-        dist.all_gather(t_gather_predict_label, t_predict_label)
-
-        final_predict_label = torch.cat([t_gather_predict_label[idx][:cnt.item()] for idx, cnt in enumerate(t_gather_cnt)], dim=0).cuda()
-        final_label = torch.cat([t_gather_label[idx][:cnt.item()] for idx, cnt in enumerate(t_gather_cnt)], dim=0).cuda()
+            final_predict_label = torch.cat([t_gather_predict_label[idx][:cnt.item()] for idx, cnt in enumerate(t_gather_cnt)], dim=0).cuda()
+            final_label = torch.cat([t_gather_label[idx][:cnt.item()] for idx, cnt in enumerate(t_gather_cnt)], dim=0).cuda()
+        else:
+            final_predict_label = self.predict_label.float().cuda()
+            final_label = self.label.float().cuda()
 
         final_predict_label = final_predict_label.view(-1)
         final_label = final_label.view(-1)

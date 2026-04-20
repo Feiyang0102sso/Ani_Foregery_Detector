@@ -24,9 +24,9 @@ class ImageAccuracy(AbstractEvaluator):
 
     def epoch_update(self):
         t = torch.tensor([self.true_cnt, self.cnt], dtype=torch.float64, device='cuda')
-        # if dist.is_initialized():
-        dist.barrier()
-        dist.all_reduce(t, op=dist.ReduceOp.SUM)
+        if dist.is_initialized():
+            dist.barrier()
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
         true_cnt = t[0].item()
         cnt = t[1].item()
         acc = true_cnt / cnt

@@ -5,6 +5,7 @@ from .F1 import ImageF1, PixelF1, ImagePrecision, ImageRecall, PixelPrecision, P
 from .AUC import ImageAUC, PixelAUC
 from .IOU import PixelIOU
 from .Accuracy import ImageAccuracy, PixelAccuracy
+from .ConfusionMatrix import ImageConfusionMatrix, SourceConfusionMatrix, PixelConfusionMatrix
 from .gradcam.grad_camera_visualize import grad_camera_visualize
 
 __all__ = [
@@ -21,6 +22,9 @@ __all__ = [
     'PixelIOU',
     'ImageAccuracy', 
     'PixelAccuracy', 
+    'ImageConfusionMatrix',
+    'SourceConfusionMatrix',
+    'PixelConfusionMatrix',
     'grad_camera_visualize',
 
 # ========== 4 new added ==========

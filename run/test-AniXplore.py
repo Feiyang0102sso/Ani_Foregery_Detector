@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import types
@@ -11,9 +12,12 @@ from torch.utils.tensorboard import SummaryWriter
 import IMDLBenCo.training_scripts.utils.misc as misc
 
 from IMDLBenCo.registry import MODELS, POSTFUNCS
-from IMDLBenCo.datasets import AnimeDatasetNoReal
+from IMDLBenCo.datasets import AnimeDataset
 from IMDLBenCo.transforms import get_albu_transforms
-from IMDLBenCo.evaluation import PixelF1, ImageF1, PixelIOU, ImageAccuracy, PixelAccuracy, ImageAUC, PixelAUC
+from IMDLBenCo.evaluation import (PixelF1, ImageF1, PixelIOU, ImageAccuracy, PixelAccuracy, ImageAUC, PixelAUC, 
+                                  ImageConfusionMatrix, SourceConfusionMatrix, PixelConfusionMatrix, PixelPrecision, PixelRecall, ImagePrecision, ImageRecall)
+from IMDLBenCo.evaluation.Accuracy import SourceAccuracy
+from IMDLBenCo.evaluation.F1 import SourcePrecision, SourceRecall, SourceF1
 
 from IMDLBenCo.training_scripts.tester import test_one_epoch
 
@@ -28,6 +32,21 @@ def get_args_parser():
     parser.add_argument('--if_test_PixelAUC', action='store_true')
     parser.add_argument('--if_test_PixelF1', action='store_true')
     parser.add_argument('--if_test_PixelIOU', action='store_true')
+    parser.add_argument('--if_test_ImageConfusionMatrix', action='store_true')
+    parser.add_argument('--if_test_PixelConfusionMatrix', action='store_true')
+
+    # Add Precision/Recall metrics to align with train
+    parser.add_argument('--if_test_PixelPrecision', action='store_true')
+    parser.add_argument('--if_test_PixelRecall', action='store_true')
+    parser.add_argument('--if_test_ImagePrecision', action='store_true')
+    parser.add_argument('--if_test_ImageRecall', action='store_true')
+    
+    # Add Source metrics parameters
+    parser.add_argument('--if_test_SourceAccuracy', action='store_true')
+    parser.add_argument('--if_test_SourcePrecision', action='store_true')
+    parser.add_argument('--if_test_SourceRecall', action='store_true')
+    parser.add_argument('--if_test_SourceF1', action='store_true')
+    parser.add_argument('--if_test_SourceConfusionMatrix', action='store_true')
 
 
     parser.add_argument('--raw_img_data_root', type=str)
@@ -80,6 +99,10 @@ def get_args_parser():
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
+    
+    # Add seeds for alignment
+    parser.add_argument('--seed', default=42, type=int)
+
     args, remaining_args = parser.parse_known_args()
 
 
@@ -90,9 +113,16 @@ def get_args_parser():
     return args, model_args
 
 def main(args, model_args):
-    print("\nINTO test-anime-no-real !!!!!!!!!!!!\n")
-    # init parameters for distributed training
-    misc.init_distributed_mode(args)
+    print("\nINTO test-anime-no-real (Single Card Mode) !!!!!!!!!!!!\n")
+    
+    # ================= Aligned: Output redirection =================
+    if args.output_dir:
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+        log_path = os.path.join(args.output_dir, "console_test_log.txt")
+        sys.stdout = Logger(log_path, sys.stdout)
+        sys.stderr = Logger(log_path, sys.stderr)
+    # ===============================================================
+
     import torch.multiprocessing
     torch.multiprocessing.set_sharing_strategy('file_system')
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
@@ -102,17 +132,48 @@ def main(args, model_args):
     print("{}".format(model_args).replace(', ', ',\n'))
     device = torch.device(args.device)
     
+    # 修复：手动设置 distributed 属性为 False，因为这是单卡模式
+    # tester.py 中会检查 args.distributed
+    args.distributed = False
+    
+    # Aligned: seed for reproducibility
+    misc.seed_torch(args.seed)
+
     test_transform = get_albu_transforms('test')
 
-    with open(args.test_data_json, "r") as f:
-        test_dataset_json = json.load(f)
-    
-    
-    if args.distributed:
-        num_tasks = misc.get_world_size()
-        global_rank = misc.get_rank()
+    # Aligned: Supporting directory for datasets (ConcatDataset)
+    from torch.utils.data import ConcatDataset
+    if os.path.isfile(args.test_data_json):
+        dataset_test_all = AnimeDataset(
+            args.test_data_json,
+            is_padding=args.if_padding,
+            is_resizing=args.if_resizing,
+            output_size=(args.image_size, args.image_size),
+            common_transforms=test_transform,
+            edge_width=args.edge_mask_width,
+            post_funcs=None, # Will be set dataset by dataset if needed, but usually None for test
+            raw_img_data_root=args.raw_img_data_root,
+            edited_img_data_root=args.edited_img_data_root
+        )
+        test_dataset_dict = {Path(args.test_data_json).stem: dataset_test_all}
     else:
-        global_rank = 0
+        test_dataset_dict = {}
+        json_files = [f for f in os.listdir(args.test_data_json) if f.endswith('.json')]
+        for json_file in json_files:
+            dataset_name = Path(json_file).stem
+            test_dataset_dict[dataset_name] = AnimeDataset(
+                os.path.join(args.test_data_json, json_file),
+                is_padding=args.if_padding,
+                is_resizing=args.if_resizing,
+                output_size=(args.image_size, args.image_size),
+                common_transforms=test_transform,
+                edge_width=args.edge_mask_width,
+                post_funcs=None,
+                raw_img_data_root=args.raw_img_data_root,
+                edited_img_data_root=args.edited_img_data_root
+            )
+    
+    global_rank = 0
     
     # ========define the model directly==========
     # model = IML_ViT(
@@ -137,6 +198,9 @@ def main(args, model_args):
     # ============================================
     evaluator_list = [
         PixelF1(threshold=0.5, mode="origin"),
+        PixelAccuracy(),
+        PixelPrecision(),
+        PixelRecall()
     ]
     if args.if_test_ImageF1:
         evaluator_list.append(ImageF1())
@@ -159,20 +223,58 @@ def main(args, model_args):
     if args.if_test_PixelIOU:
         evaluator_list.append(PixelIOU())
         print(f"add test PixelIOU")
+    if args.if_test_ImageConfusionMatrix:
+        evaluator_list.append(ImageConfusionMatrix())
+        print(f"add test ImageConfusionMatrix")
+    if args.if_test_PixelConfusionMatrix:
+        evaluator_list.append(PixelConfusionMatrix())
+        print(f"add test PixelConfusionMatrix")
+    
+    # Aligned metrics
+    if args.if_test_PixelPrecision:
+        evaluator_list.append(PixelPrecision())
+        print(f"add test PixelPrecision")
+    if args.if_test_PixelRecall:
+        evaluator_list.append(PixelRecall())
+        print(f"add test PixelRecall")
+    if args.if_test_ImagePrecision:
+        evaluator_list.append(ImagePrecision())
+        print(f"add test ImagePrecision")
+    if args.if_test_ImageRecall:
+        evaluator_list.append(ImageRecall())
+        print(f"add test ImageRecall")
+        
+    # Source metrics
+    if args.if_test_SourceAccuracy:
+        evaluator_list.append(SourceAccuracy())
+        print(f"add test SourceAccuracy")
+    if args.if_test_SourcePrecision:
+        evaluator_list.append(SourcePrecision())
+        print(f"add test SourcePrecision")
+    if args.if_test_SourceRecall:
+        evaluator_list.append(SourceRecall())
+        print(f"add test SourceRecall")
+    if args.if_test_SourceF1:
+        evaluator_list.append(SourceF1())
+        print(f"add test SourceF1")
+    if args.if_test_SourceConfusionMatrix:
+        evaluator_list.append(SourceConfusionMatrix())
+        print(f"add test SourceConfusionMatrix")
 
 
-
-    if args.distributed:
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     model.to(device)
-
     model_without_ddp = model
     print("Model = %s" % str(model_without_ddp))
-
-    if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
-        model_without_ddp = model.module
+    # Aligned: print parameter counts
+    def count_parameters(model):
+        for name, module in model.named_modules():
+            if not list(module.parameters()):
+                continue
+            param_count = sum(p.numel() for p in module.parameters() if p.requires_grad)
+            if len(name.split('.')) == 1:
+                print(f"Module {name} has {param_count} trainable parameters.")
+    count_parameters(model)
     
     start_time = time.time()
     # get post function (if have)
@@ -184,8 +286,8 @@ def main(args, model_args):
     else:
         post_function = None
     
-    # Start go through each datasets:
-    for dataset_name, dataset_path in test_dataset_json.items():
+    # Start go through each dataset:
+    for dataset_name, dataset_test in test_dataset_dict.items():
         args.full_log_dir = os.path.join(args.log_dir, dataset_name)
 
         if global_rank == 0 and args.full_log_dir is not None:
@@ -194,35 +296,20 @@ def main(args, model_args):
         else:
             log_writer = None
         
-        # ---- dataset with crop augmentation ----
-        dataset_test = AnimeDatasetNoReal(
-            dataset_path,
-            is_padding=args.if_padding,
-            is_resizing=args.if_resizing,
-            output_size=(args.image_size, args.image_size),
-            common_transforms=test_transform,
-            edge_width=args.edge_mask_width,
-            post_funcs=post_function,
-            raw_img_data_root=args.raw_img_data_root,
-            edited_img_data_root=args.edited_img_data_root
-        )
-        
         # ------------------------------------
         print(dataset_test)
         print("len(dataset_test)", len(dataset_test))
         
-        # Sampler
-        if args.distributed:
-            sampler_test = torch.utils.data.DistributedSampler(
-                dataset_test, 
-                num_replicas=num_tasks, 
-                rank=global_rank, 
-                shuffle=False,
-                drop_last=False
-            )
-            print("Sampler_test = %s" % str(sampler_test))
-        else:
-            sampler_test = torch.utils.data.RandomSampler(dataset_test)
+        sampler_test = torch.utils.data.RandomSampler(dataset_test)
+
+        data_loader_test = torch.utils.data.DataLoader(
+            dataset_test, 
+            sampler=sampler_test,
+            batch_size=args.test_batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_mem,
+            drop_last=False,
+        )
 
         data_loader_test = torch.utils.data.DataLoader(
             dataset_test, 
@@ -238,14 +325,20 @@ def main(args, model_args):
 
         ckpt_path = args.checkpoint_path
         print(f"🔄 Loading checkpoint: {ckpt_path}")
-        ckpt = torch.load(ckpt_path, map_location='cuda', weights_only=False)
-        print(type(ckpt))
-        print(ckpt.keys())
+        checkpoint = torch.load(ckpt_path, map_location='cuda', weights_only=False)
+        
+        # Aligned: Manual removal of mismatched parameters
+        if 'model' in checkpoint:
+            keys_to_remove = []
+            for key in checkpoint['model']:
+                if key.startswith(('auto_weight.', 'cls_head.', 'source_head.')):
+                    keys_to_remove.append(key)
+            for key in keys_to_remove:
+                del checkpoint['model'][key]
+            if keys_to_remove:
+                print(f"⚠️ Aligned: Removed incompatible old parameters from pretrained weights: {keys_to_remove}")
 
-        if hasattr(model, 'module'):
-            model.module.load_state_dict(ckpt['model'], strict=True)
-        else:
-            model.load_state_dict(ckpt['model'], strict=True)
+        model.load_state_dict(checkpoint['model'], strict=False)
 
         test_stats = test_one_epoch(
             model=model,
@@ -279,20 +372,22 @@ def main(args, model_args):
         
 
 
+class Logger(object):
+    def __init__(self, filename='console_log.txt', stream=sys.stdout):
+        self.terminal = stream
+        self.log = open(filename, 'w', encoding='utf-8')
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.terminal.flush()
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
 if __name__ == '__main__':
-
-    import torch.distributed as dist
-    from datetime import timedelta
-
-    # 防止出现uninitialized value报错
-    # 反正我现在只有1张卡
-
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12345'
-    if not dist.is_initialized():
-        store = dist.TCPStore("127.0.0.1", 12345, 1, is_master=True, timeout=timedelta(seconds=30), use_libuv=False)
-        dist.init_process_group("gloo", store=store, rank=0, world_size=1)
-
     args, model_args = get_args_parser()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)

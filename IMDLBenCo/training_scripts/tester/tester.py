@@ -76,6 +76,7 @@ def test_one_loader(model: torch.nn.Module,
                 predict=mask_pred, 
                 predict_label=label_pred,
                 predict_source=source_pred,
+                args=args,
                 **data_dict
             )
 
